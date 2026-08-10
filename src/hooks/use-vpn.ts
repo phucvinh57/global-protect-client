@@ -29,12 +29,26 @@ export type ConnectRequest = {
 /** Failures worth interrupting the user for, keyed so repeats still surface. */
 export type VpnError = { id: string; msg: string };
 
+/**
+ * A connection the tray asked this window to start, keyed so asking twice for
+ * the same one is two requests.
+ */
+export type ConnectIntent = { id: string; profileId: string };
+
 type StateEvent = { state: VpnState; profileId: string | null };
 type GatewaysEvent = { list: Gateway[]; selecting: boolean };
+/** A question the helper asked before this window existed. */
+type PendingPrompt =
+	| ({ kind: "certificate" } & CertificatePrompt)
+	| ({ kind: "mfa" } & MfaPrompt)
+	| { kind: "gateways"; list: Gateway[] };
 type StatusResponse = {
 	state: VpnState;
 	profileId: string | null;
 	connection: ConnectionInfo | null;
+	pending: PendingPrompt | null;
+	/** Set when the tray asked for a connection this window has yet to run. */
+	requestedProfileId: string | null;
 };
 
 /**
@@ -51,6 +65,9 @@ export const useVpn = () => {
 	// Set only while the helper is blocked waiting for a gateway choice.
 	const [gatewayChoice, setGatewayChoice] = useState<Gateway[] | null>(null);
 	const [error, setError] = useState<VpnError | null>(null);
+	// A connection picked from the tray, which this window has to run because
+	// only it can ask for a password or a passcode and report the attempt.
+	const [connectIntent, setConnectIntent] = useState<ConnectIntent | null>(null);
 	/** False until the backend's current state is known, so callers can tell a
 	 * real transition from the window simply catching up. */
 	const [ready, setReady] = useState(false);
@@ -81,6 +98,9 @@ export const useVpn = () => {
 			listen<GatewaysEvent>("vpn://gateways", ({ payload }) => {
 				if (mounted) setGatewayChoice(payload.selecting ? payload.list : null);
 			}),
+			listen<{ profileId: string }>("vpn://connect-request", ({ payload }) => {
+				if (mounted) setConnectIntent({ id: crypto.randomUUID(), profileId: payload.profileId });
+			}),
 			listen<{ msg: string }>("vpn://error", ({ payload }) => {
 				if (!mounted) return;
 				setError({ id: crypto.randomUUID(), msg: payload.msg });
@@ -91,12 +111,30 @@ export const useVpn = () => {
 				setGatewayChoice(null);
 			}),
 		]);
-		// The window can be reopened from the tray long after a tunnel came up.
+		// Closing the window destroys it, so this window may be a fresh one
+		// opened from the tray long after a tunnel came up — or in the middle
+		// of an attempt whose question is still waiting for an answer, or one
+		// built by the tray for the sole purpose of running a connection whose
+		// event was emitted before the listeners above existed.
 		void invoke<StatusResponse>("vpn_status").then((status) => {
 			if (!mounted) return;
 			setState(status.state);
 			setProfileId(status.profileId);
 			setConnection(status.connection);
+			switch (status.pending?.kind) {
+				case "certificate":
+					setCertificate(status.pending);
+					break;
+				case "mfa":
+					setChallenge(status.pending);
+					break;
+				case "gateways":
+					setGatewayChoice(status.pending.list);
+					break;
+			}
+			if (status.requestedProfileId) {
+				setConnectIntent({ id: crypto.randomUUID(), profileId: status.requestedProfileId });
+			}
 			setReady(true);
 		});
 		return () => {
@@ -135,6 +173,12 @@ export const useVpn = () => {
 		await invoke("vpn_select_gateway", { address });
 		setGatewayChoice(null);
 	}, []);
+	/** Told to the backend as well, so a window opened later is not handed the
+	 * same request again. */
+	const clearConnectIntent = useCallback(async () => {
+		setConnectIntent(null);
+		await invoke("vpn_clear_connect_request");
+	}, []);
 
 	return {
 		state,
@@ -145,6 +189,8 @@ export const useVpn = () => {
 		challenge,
 		gatewayChoice,
 		error,
+		connectIntent,
+		clearConnectIntent,
 		connect,
 		disconnect,
 		trustCertificate,

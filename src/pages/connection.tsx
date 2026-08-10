@@ -78,6 +78,43 @@ export const ConnectionPage = () => {
 		}
 	}, [toast]);
 
+	// A connection picked from the tray runs exactly like one picked from the
+	// list: the toast follows the attempt, and anything the keyring cannot
+	// answer — a one-time passcode above all — is still asked for here. The
+	// window may have been built for this alone, so the request arrives with
+	// the rest of the backend's state and waits for the saved connections it
+	// names to load.
+	const handledIntent = useRef<string | null>(null);
+	useEffect(() => {
+		const intent = vpn.connectIntent;
+		if (!intent || !vpn.ready || profiles.loading || handledIntent.current === intent.id) return;
+		handledIntent.current = intent.id;
+		void vpn.clearConnectIntent();
+		const profile = profiles.profiles.find((candidate) => candidate.id === intent.profileId);
+		if (!profile) {
+			toast.show({ tone: "error", title: "That connection no longer exists" });
+			return;
+		}
+		if (vpn.state !== "disconnected") {
+			toast.show({ tone: "info", title: "Another connection is already active" });
+			return;
+		}
+		// A prompt still on screen belongs to an attempt the user is walking
+		// away from; its pending toast would otherwise never be resolved.
+		cancelCredentials();
+		start(profile);
+	}, [
+		vpn.connectIntent,
+		vpn.clearConnectIntent,
+		vpn.ready,
+		vpn.state,
+		profiles.loading,
+		profiles.profiles,
+		cancelCredentials,
+		start,
+		toast,
+	]);
+
 	// A failure the helper reports resolves the attempt toast in place.
 	useEffect(() => {
 		if (!vpn.error) return;

@@ -3,25 +3,16 @@ mod helper_process;
 mod settings;
 mod tray;
 
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Mutex,
-    },
-    thread,
-    time::Duration,
-};
+use std::{sync::Mutex, thread, time::Duration};
 
 use helper_process::{ActiveProfile, HelperProcess, StatusResponse, VpnRuntime};
 use serde::{Deserialize, Serialize};
 use settings::Profile;
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
 struct AppState {
     helper: Mutex<Option<HelperProcess>>,
     runtime: VpnRuntime,
-    /// Set once the user picks Quit, so the window may finally close.
-    quitting: AtomicBool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,8 +53,10 @@ fn view(profile: Profile) -> ProfileView {
     }
 }
 
-/// Sends a command to the running helper, failing when there is none.
-fn send_to_helper(state: &State<'_, AppState>, command: serde_json::Value) -> Result<(), String> {
+/// Answers the question the helper is blocked on, failing when there is no
+/// helper. The prompt is forgotten once the answer is on its way, so a window
+/// opened later is not asked the same question a second time.
+fn answer_prompt(state: &State<'_, AppState>, command: serde_json::Value) -> Result<(), String> {
     let mut helper = state
         .helper
         .lock()
@@ -71,7 +64,18 @@ fn send_to_helper(state: &State<'_, AppState>, command: serde_json::Value) -> Re
     helper
         .as_mut()
         .ok_or("VPN helper is not running")?
-        .send(command)
+        .send(command)?;
+    state.runtime.set_pending(None);
+    Ok(())
+}
+
+/// Repaints the tray from the runtime as it stands. The tray menu lists the
+/// saved connections, so it has to be rebuilt whenever that list changes and
+/// not only when the tunnel does.
+fn refresh_tray(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let profile = state.runtime.profile();
+    tray::refresh(app, &state.runtime.state(), profile.as_ref());
 }
 
 #[tauri::command]
@@ -127,6 +131,7 @@ fn profile_save(
     } else if !profile.remember {
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
+    refresh_tray(&app);
     Ok(view(profile))
 }
 
@@ -137,7 +142,9 @@ fn profile_delete(app: AppHandle, id: String) -> Result<(), String> {
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
     store.profiles.retain(|profile| profile.id != id);
-    settings::save(&app, &store)
+    settings::save(&app, &store)?;
+    refresh_tray(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -247,7 +254,19 @@ fn vpn_status(state: State<'_, AppState>) -> StatusResponse {
         state: state.runtime.state(),
         profile_id: state.runtime.profile().map(|profile| profile.id),
         connection: state.runtime.connection(),
+        pending: state.runtime.pending(),
+        requested_profile_id: state.runtime.connect_request(),
     }
+}
+
+/// Forgets the tray's connection request once a window has taken it on, so a
+/// window opened later never starts the same attempt a second time. The tray
+/// is repainted with it: clicking one of its connections ticks that item, and
+/// only a tunnel that is actually up should stay ticked.
+#[tauri::command]
+fn vpn_clear_connect_request(app: AppHandle, state: State<'_, AppState>) {
+    state.runtime.set_connect_request(None);
+    refresh_tray(&app);
 }
 
 #[tauri::command]
@@ -270,18 +289,18 @@ fn vpn_trust_cert(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         profile.trusted_fingerprint = Some(fingerprint);
         settings::save(&app, &store)?;
     }
-    send_to_helper(&state, serde_json::json!({ "cmd": "trust_cert" }))
+    answer_prompt(&state, serde_json::json!({ "cmd": "trust_cert" }))
 }
 
 #[tauri::command]
 fn vpn_reject_cert(state: State<'_, AppState>) -> Result<(), String> {
-    send_to_helper(&state, serde_json::json!({ "cmd": "reject_cert" }))
+    answer_prompt(&state, serde_json::json!({ "cmd": "reject_cert" }))
 }
 
 /// Answers a gateway multi-factor challenge.
 #[tauri::command]
 fn vpn_submit_otp(state: State<'_, AppState>, otp: String) -> Result<(), String> {
-    send_to_helper(
+    answer_prompt(
         &state,
         serde_json::json!({ "cmd": "submit_otp", "otp": otp }),
     )
@@ -290,17 +309,32 @@ fn vpn_submit_otp(state: State<'_, AppState>, otp: String) -> Result<(), String>
 /// Picks one of the gateways the portal offered.
 #[tauri::command]
 fn vpn_select_gateway(state: State<'_, AppState>, address: String) -> Result<(), String> {
-    send_to_helper(
+    answer_prompt(
         &state,
         serde_json::json!({ "cmd": "select_gateway", "address": address }),
     )
 }
 
-#[tauri::command]
-fn window_hide(app: AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+/// Starts a connection the tray asked for. The attempt is not started here:
+/// it may need a password or a one-time passcode, and the window is the only
+/// thing that can ask for either, or report the attempt in a toast. So the
+/// request is parked in the runtime and a window is opened to run it — a fresh
+/// one when the last close destroyed it, which reads the request back from
+/// `vpn_status` because this event was emitted before its webview could
+/// listen for anything.
+fn connect_from_tray(app: &AppHandle, profile_id: &str) {
+    let state = app.state::<AppState>();
+    if state.runtime.state() != "disconnected" {
+        return;
     }
+    state
+        .runtime
+        .set_connect_request(Some(profile_id.to_string()));
+    tray::show_window(app);
+    let _ = app.emit(
+        "vpn://connect-request",
+        serde_json::json!({ "profileId": profile_id }),
+    );
 }
 
 /// Asks the helper to tear the tunnel down. Used by the tray, which has no
@@ -318,7 +352,6 @@ fn disconnect_from_tray(app: &AppHandle) {
 /// so quitting always tries to close it first.
 fn quit(app: &AppHandle) {
     let state = app.state::<AppState>();
-    state.quitting.store(true, Ordering::SeqCst);
     if state.runtime.state() != "disconnected" {
         disconnect_from_tray(app);
         thread::sleep(Duration::from_millis(600));
@@ -334,22 +367,15 @@ pub fn run() {
         .manage(AppState {
             helper: Mutex::new(None),
             runtime: VpnRuntime::new(),
-            quitting: AtomicBool::new(false),
         })
         .setup(|app| {
-            tray::build(&app.handle().clone(), disconnect_from_tray, quit)?;
+            tray::build(
+                &app.handle().clone(),
+                connect_from_tray,
+                disconnect_from_tray,
+                quit,
+            )?;
             Ok(())
-        })
-        // Closing the window leaves the app in the tray so a tunnel keeps
-        // running; only Quit actually ends the process.
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                let state = window.app_handle().state::<AppState>();
-                if !state.quitting.load(Ordering::SeqCst) {
-                    api.prevent_close();
-                    let _ = window.hide();
-                }
-            }
         })
         .invoke_handler(tauri::generate_handler![
             profiles_load,
@@ -358,12 +384,24 @@ pub fn run() {
             vpn_connect,
             vpn_disconnect,
             vpn_status,
+            vpn_clear_connect_request,
             vpn_trust_cert,
             vpn_reject_cert,
             vpn_submit_otp,
             vpn_select_gateway,
-            window_hide,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        // Closing the window destroys it along with its webview process, which
+        // is the point: only the tray, the helper and the tunnel stay in
+        // memory. The event loop would end with the last window, so that exit
+        // is vetoed. Quit's own `AppHandle::exit` carries a code and passes.
+        .run(|_app, event| {
+            if let RunEvent::ExitRequested {
+                code: None, api, ..
+            } = event
+            {
+                api.prevent_exit();
+            }
+        });
 }

@@ -65,12 +65,33 @@ pub struct ActiveProfile {
     pub name: String,
 }
 
+/// A question the helper is blocked on. Closing the window destroys it, so the
+/// prompt has to outlive the webview that first showed it: without this, a
+/// window reopened mid-attempt would leave the helper waiting forever for an
+/// answer nobody is being asked for any more.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PendingPrompt {
+    Certificate {
+        fingerprint: String,
+        details: String,
+    },
+    Mfa {
+        message: String,
+    },
+    Gateways {
+        list: Vec<Gateway>,
+    },
+}
+
 #[derive(Clone, Default)]
 pub struct VpnRuntime {
     state: Arc<Mutex<String>>,
     last_fingerprint: Arc<Mutex<Option<String>>>,
     profile: Arc<Mutex<Option<ActiveProfile>>>,
     connection: Arc<Mutex<Option<ConnectionInfo>>>,
+    pending: Arc<Mutex<Option<PendingPrompt>>>,
+    connect_request: Arc<Mutex<Option<String>>>,
 }
 
 impl VpnRuntime {
@@ -80,6 +101,8 @@ impl VpnRuntime {
             last_fingerprint: Arc::new(Mutex::new(None)),
             profile: Arc::new(Mutex::new(None)),
             connection: Arc::new(Mutex::new(None)),
+            pending: Arc::new(Mutex::new(None)),
+            connect_request: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -102,9 +125,33 @@ impl VpnRuntime {
         self.connection.lock().ok()?.clone()
     }
 
+    pub fn pending(&self) -> Option<PendingPrompt> {
+        self.pending.lock().ok()?.clone()
+    }
+
+    /// The connection the tray was told to start. It waits here rather than
+    /// being started outright: only a window can ask for the password or the
+    /// one-time passcode the attempt may need, and the tray's window may not
+    /// exist yet when the request is made.
+    pub fn connect_request(&self) -> Option<String> {
+        self.connect_request.lock().ok()?.clone()
+    }
+
+    pub fn set_connect_request(&self, profile_id: Option<String>) {
+        if let Ok(mut current) = self.connect_request.lock() {
+            *current = profile_id;
+        }
+    }
+
     pub fn set_profile(&self, profile: Option<ActiveProfile>) {
         if let Ok(mut current) = self.profile.lock() {
             *current = profile;
+        }
+    }
+
+    pub fn set_pending(&self, prompt: Option<PendingPrompt>) {
+        if let Ok(mut current) = self.pending.lock() {
+            *current = prompt;
         }
     }
 
@@ -125,6 +172,7 @@ impl VpnRuntime {
     fn publish_state(&self, app: &AppHandle, state: String) {
         if state == "disconnected" {
             self.set_connection(None);
+            self.set_pending(None);
         }
         self.set_state(state.clone());
         let profile = self.profile();
@@ -135,11 +183,7 @@ impl VpnRuntime {
                 "profileId": profile.as_ref().map(|profile| profile.id.clone()),
             }),
         );
-        crate::tray::refresh(
-            app,
-            &state,
-            profile.as_ref().map(|profile| profile.name.as_str()),
-        );
+        crate::tray::refresh(app, &state, profile.as_ref());
     }
 }
 
@@ -188,18 +232,31 @@ impl HelperProcess {
                         if let Ok(mut last) = runtime.last_fingerprint.lock() {
                             *last = Some(fingerprint.clone());
                         }
+                        runtime.set_pending(Some(PendingPrompt::Certificate {
+                            fingerprint: fingerprint.clone(),
+                            details: details.clone(),
+                        }));
                         let _ = app.emit(
                             "vpn://cert-untrusted",
                             serde_json::json!({ "fingerprint": fingerprint, "details": details }),
                         );
                     }
                     HelperEvent::MfaChallenge { message } => {
+                        runtime.set_pending(Some(PendingPrompt::Mfa {
+                            message: message.clone(),
+                        }));
                         let _ = app.emit(
                             "vpn://mfa-challenge",
                             serde_json::json!({ "message": message }),
                         );
                     }
                     HelperEvent::Gateways { list, selecting } => {
+                        // Only a selecting list is a question; the other kind
+                        // is the helper announcing what it found.
+                        if selecting {
+                            runtime
+                                .set_pending(Some(PendingPrompt::Gateways { list: list.clone() }));
+                        }
                         let _ = app.emit(
                             "vpn://gateways",
                             serde_json::json!({ "list": list, "selecting": selecting }),
@@ -221,6 +278,9 @@ impl HelperProcess {
                         let _ = app.emit("vpn://connected", info);
                     }
                     HelperEvent::Error { msg } => {
+                        // The attempt is over: a question still waiting would
+                        // only collect an answer nothing is listening for.
+                        runtime.set_pending(None);
                         let _ = app.emit("vpn://error", serde_json::json!({ "msg": msg }));
                     }
                 }
@@ -278,4 +338,11 @@ pub struct StatusResponse {
     pub state: String,
     pub profile_id: Option<String>,
     pub connection: Option<ConnectionInfo>,
+    /// Whatever the helper is still waiting on, so a window opened after the
+    /// prompt was raised can put the question back on screen.
+    pub pending: Option<PendingPrompt>,
+    /// A connection the tray asked for, waiting for a window to run it. A
+    /// window built by that very request finds it here, since the event
+    /// announcing it was emitted before the webview could listen.
+    pub requested_profile_id: Option<String>,
 }
