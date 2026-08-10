@@ -2,7 +2,8 @@ pre-commit:
   parallel: true
   jobs:
     - name: react
-      run: bun run lint:react
+      run: bun run lint:react --write
+      stage_fixed: true
 
     - name: rust
       run: bun run lint:rust
