@@ -40,12 +40,6 @@
         "files": {
           "/usr/share/polkit-1/actions/com.npvinh.gp-client.policy": "polkit/com.npvinh.gp-client.policy"
         }
-      },
-      "rpm": {
-        "depends": ["openconnect"],
-        "files": {
-          "/usr/share/polkit-1/actions/com.npvinh.gp-client.policy": "polkit/com.npvinh.gp-client.policy"
-        }
       }
     }
   }
