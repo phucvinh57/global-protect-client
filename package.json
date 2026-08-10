@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:tauri": "cargo build --manifest-path src-tauri/Cargo.toml -p gp-helper && vite",
     "build": "tsc && vite build",
+    "build:tauri": "cargo build --manifest-path src-tauri/Cargo.toml -p gp-helper --release && bun run build",
     "lint": "bun run lint:react && bun run lint:rust",
     "lint:react": "biome check .",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",
@@ -15,6 +17,7 @@
   "dependencies": {
     "@tailwindcss/typography": "^0.5.20",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-opener": "^2.5.4",
     "@untitledui/icons": "^0.0.22",
     "react": "^19.2.8",

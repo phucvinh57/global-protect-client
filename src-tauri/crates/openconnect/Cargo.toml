@@ -1,0 +1,11 @@
+[package]
+name = "openconnect"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libc = "0.2"
+openconnect-sys = { path = "../openconnect-sys" }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

@@ -4,17 +4,19 @@
   "version": "0.1.0",
   "identifier": "com.npvinh.gp-client",
   "build": {
-    "beforeDevCommand": "bun run dev",
+    "beforeDevCommand": "bun run dev:tauri",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
+    "beforeBuildCommand": "bun run build:tauri",
     "frontendDist": "../dist"
   },
   "app": {
     "windows": [
       {
         "title": "gp-client",
-        "width": 800,
-        "height": 600
+        "width": 460,
+        "height": 720,
+        "minWidth": 380,
+        "minHeight": 560
       }
     ],
     "security": {

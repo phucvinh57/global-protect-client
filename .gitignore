@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# VPN credentials and certificate material must stay local.
+*.crt
+*.pem
+*.key
+*.p12
+*.pfx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

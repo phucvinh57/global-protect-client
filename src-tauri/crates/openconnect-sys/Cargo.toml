@@ -1,0 +1,10 @@
+[package]
+name = "openconnect-sys"
+version = "0.1.0"
+edition = "2021"
+links = "openconnect"
+
+[build-dependencies]
+bindgen = "0.72"
+cc = "1"
+pkg-config = "0.3"

@@ -8,22 +8,26 @@
 @custom-variant label (& [data-label]);
 @custom-variant focus-input-within (&:has(input:focus));
 
-@utility scrollbar-hide {
-    /* For Webkit-based browsers (Chrome, Safari and Opera) */
-    &::-webkit-scrollbar {
-        display: none;
-        -webkit-appearance: none;
-    }
-
-    /* For IE, Edge and Firefox */
-    -ms-overflow-style: none; /* IE and Edge */
-    scrollbar-width: none; /* Firefox */
-}
-
 @utility transition-inherit-all {
     transition-property: inherit;
     transition-duration: inherit;
     transition-timing-function: inherit;
+}
+
+/* This is a desktop window, not a web page: scrollbars are chrome we never
+   want to see. Content still scrolls by wheel, trackpad and keyboard. */
+*,
+html,
+body {
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+}
+
+*::-webkit-scrollbar,
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+    display: none;
+    -webkit-appearance: none;
 }
 
 html,
