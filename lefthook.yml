@@ -1,0 +1,8 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: react
+      run: bun run lint:react
+
+    - name: rust
+      run: bun run lint:rust
