@@ -4,18 +4,24 @@
 //! portal and gateway protocol directly; libopenconnect receives the resulting
 //! cookie and only builds the tunnel.
 
+mod deadline;
 mod prompt;
 
 use std::{
 	io::{self, BufRead, Write},
-	sync::{Arc, Mutex},
+	sync::{
+		atomic::{AtomicUsize, Ordering},
+		Arc, Mutex,
+	},
 	thread::JoinHandle,
+	time::Duration,
 };
 
 use gp_auth::{Answer, AuthRequest, ClientOs, Question, TlsOptions};
 use openconnect::{sys, Callbacks, CancelHandle, Options, Vpn};
 use serde::{Deserialize, Serialize};
 
+use deadline::Deadline;
 use prompt::Prompt;
 
 #[derive(Debug, Deserialize)]
@@ -57,6 +63,10 @@ struct ConnectRequest {
 	/// Submit a HIP report when the gateway asks for one.
 	#[serde(default)]
 	hip: bool,
+	/// Seconds the attempt may spend before it is given up on; 0 removes the
+	/// limit. Omitted means [`deadline::DEFAULT_TIMEOUT_SECS`].
+	#[serde(default)]
+	timeout_secs: Option<u64>,
 	#[serde(default)]
 	verbose: bool,
 }
@@ -105,9 +115,37 @@ struct Prompts {
 	trust: Prompt<bool>,
 	otp: Prompt<String>,
 	gateway: Prompt<String>,
+	/// How many questions the user is looking at right now. The attempt's
+	/// deadline stops counting while this is non-zero, so a slowly typed
+	/// one-time code can never be what times a connection out.
+	waiting: AtomicUsize,
 }
 
 impl Prompts {
+	fn ask_trust(&self) -> Option<bool> {
+		let _waiting = self.waiting();
+		self.trust.wait()
+	}
+
+	fn ask_otp(&self) -> Option<String> {
+		let _waiting = self.waiting();
+		self.otp.wait()
+	}
+
+	fn ask_gateway(&self) -> Option<String> {
+		let _waiting = self.waiting();
+		self.gateway.wait()
+	}
+
+	fn is_waiting(&self) -> bool {
+		self.waiting.load(Ordering::SeqCst) > 0
+	}
+
+	fn waiting(&self) -> Waiting<'_> {
+		self.waiting.fetch_add(1, Ordering::SeqCst);
+		Waiting(self)
+	}
+
 	fn cancel_all(&self) {
 		self.trust.cancel();
 		self.otp.cancel();
@@ -119,6 +157,15 @@ impl Prompts {
 		self.trust.reset();
 		self.otp.reset();
 		self.gateway.reset();
+	}
+}
+
+/// Held for as long as one question is on screen.
+struct Waiting<'a>(&'a Prompts);
+
+impl Drop for Waiting<'_> {
+	fn drop(&mut self) {
+		self.0.waiting.fetch_sub(1, Ordering::SeqCst);
 	}
 }
 
@@ -144,6 +191,44 @@ impl ConnectionControl {
 		if let Ok(mut current) = self.0.lock() {
 			*current = None;
 		}
+	}
+}
+
+/// One connection attempt, and the single way it is brought down.
+///
+/// Any failure ends the attempt: pending questions are withdrawn and a
+/// half-built tunnel is cancelled, rather than left waiting for an answer that
+/// can no longer lead anywhere. Only the first failure is reported — the
+/// cancellation makes everything still in flight fail too, and that fallout
+/// says nothing the user needs to hear.
+struct Attempt {
+	emitter: Emitter,
+	prompts: Arc<Prompts>,
+	control: Arc<ConnectionControl>,
+	failure: Mutex<Option<String>>,
+}
+
+impl Attempt {
+	fn new(emitter: Emitter, prompts: Arc<Prompts>, control: Arc<ConnectionControl>) -> Self {
+		Self {
+			emitter,
+			prompts,
+			control,
+			failure: Mutex::new(None),
+		}
+	}
+
+	fn fail(&self, message: impl Into<String>) {
+		let message = message.into();
+		match self.failure.lock() {
+			Ok(mut failure) if failure.is_none() => *failure = Some(message.clone()),
+			// Already failing, or the lock is poisoned and the attempt is in no
+			// state to report anything either way.
+			_ => return,
+		}
+		self.emitter.emit(Event::Error { msg: message });
+		self.prompts.cancel_all();
+		self.control.cancel();
 	}
 }
 
@@ -207,7 +292,7 @@ impl Callbacks for TunnelCallbacks {
 			fingerprint: fingerprint.clone(),
 			details,
 		});
-		if self.prompts.trust.wait().unwrap_or(false) {
+		if self.prompts.ask_trust().unwrap_or(false) {
 			self.trusted.add(fingerprint);
 			0
 		} else {
@@ -225,6 +310,32 @@ fn run_connection(
 	prompts.reset_all();
 	let trusted = TrustStore::default();
 	trusted.seed(request.trusted_fingerprint.clone());
+	let attempt = Arc::new(Attempt::new(
+		emitter.clone(),
+		prompts.clone(),
+		control.clone(),
+	));
+
+	let limit = Duration::from_secs(
+		request
+			.timeout_secs
+			.unwrap_or(deadline::DEFAULT_TIMEOUT_SECS),
+	);
+	// A zero limit is how a caller asks for no limit at all.
+	let deadline = (!limit.is_zero()).then(|| {
+		let working = prompts.clone();
+		let expiring = attempt.clone();
+		Deadline::start(
+			limit,
+			move || !working.is_waiting(),
+			move || {
+				expiring.fail(format!(
+					"Gave up after {} seconds: the portal did not finish bringing the connection up",
+					limit.as_secs()
+				));
+			},
+		)
+	});
 
 	let result = (|| -> Result<(), String> {
 		emitter.emit(Event::State { state: "authenticating" });
@@ -260,6 +371,11 @@ fn run_connection(
 		control.replace(vpn.cancel_handle());
 		vpn.configure(&options)?;
 		let connection = vpn.connect_tunnel(&options)?;
+		// The budget covers getting the tunnel up. The session that follows
+		// lasts as long as the user wants it to.
+		if let Some(deadline) = deadline.as_ref() {
+			deadline.finish();
+		}
 		emitter.emit(Event::Connected {
 			ifname: connection.ifname,
 			addr: connection.address,
@@ -277,7 +393,9 @@ fn run_connection(
 	control.clear();
 	prompts.cancel_all();
 	if let Err(message) = result {
-		emitter.emit(Event::Error { msg: message });
+		// Ignored when the attempt was already brought down — this is then
+		// only how the worker learnt about it.
+		attempt.fail(message);
 	}
 	emitter.emit(Event::State { state: "disconnected" });
 }
@@ -311,7 +429,7 @@ fn authenticate(
 			fingerprint: prompt.fingerprint.clone(),
 			details: prompt.details,
 		});
-		let accepted = trust_prompts.trust.wait().unwrap_or(false);
+		let accepted = trust_prompts.ask_trust().unwrap_or(false);
 		if accepted {
 			trust_store.add(prompt.fingerprint);
 		}
@@ -328,7 +446,7 @@ fn authenticate(
 			ask_emitter.emit(Event::MfaChallenge {
 				message: challenge.message.clone(),
 			});
-			match ask_prompts.otp.wait() {
+			match ask_prompts.ask_otp() {
 				Some(otp) => Answer::Otp(otp),
 				None => Answer::Cancelled,
 			}
@@ -338,7 +456,7 @@ fn authenticate(
 				list: gateways.iter().map(gateway_info).collect(),
 				selecting: true,
 			});
-			match ask_prompts.gateway.wait() {
+			match ask_prompts.ask_gateway() {
 				Some(address) => Answer::Gateway(address),
 				None => Answer::Cancelled,
 			}

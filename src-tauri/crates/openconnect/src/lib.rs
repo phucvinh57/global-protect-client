@@ -281,14 +281,22 @@ impl<'a> Vpn<'a> {
 
 impl Drop for Vpn<'_> {
 	fn drop(&mut self) {
-		if let Ok(mut fd) = self.cancel.0.lock() {
-			if let Some(CancelFd::Auth(value)) = fd.take() {
-				unsafe { libc::close(value) };
-			}
+		// Held across the free, because a cancel may be arriving from another
+		// thread — a connection watchdog, or a disconnect. Under the lock it
+		// either writes while the descriptor is still valid, or finds the
+		// handle already emptied and does nothing.
+		let mut cancel = self
+			.cancel
+			.0
+			.lock()
+			.unwrap_or_else(|poisoned| poisoned.into_inner());
+		if let Some(CancelFd::Auth(value)) = cancel.take() {
+			unsafe { libc::close(value) };
 		}
 		if !self.info.is_null() {
 			unsafe { sys::openconnect_vpninfo_free(self.info) };
 		}
+		drop(cancel);
 		// The library owns the read end after set_cancel_fd().
 		self.cancel_read_fd = -1;
 		self.callback_context.vpninfo = ptr::null_mut();

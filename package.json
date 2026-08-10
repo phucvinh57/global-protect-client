@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:tauri": "cargo build --manifest-path src-tauri/Cargo.toml -p gp-helper && vite",
+    "dev:tauri": "bun run scripts/build-helper.ts && vite",
     "build": "tsc && vite build",
-    "build:tauri": "cargo build --manifest-path src-tauri/Cargo.toml -p gp-helper --release && bun run build",
+    "build:tauri": "bun run scripts/build-helper.ts --release && bun run build",
     "lint": "bun run lint:react && bun run lint:rust",
     "lint:react": "biome check .",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",

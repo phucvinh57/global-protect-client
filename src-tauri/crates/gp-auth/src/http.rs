@@ -13,6 +13,16 @@ use crate::{
 /// is why a bare "512" is all this app used to be able to report.
 const REASON_HEADER: &str = "x-private-pan-globalprotect";
 
+/// An address that is not listening, or is being dropped by a firewall, should
+/// fail while the user is still watching rather than sit there.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Ceiling for one request. It is deliberately below the helper's budget for a
+/// whole attempt, so a stalled request cannot outlive the attempt it belongs to
+/// by much: cancelling the attempt cannot interrupt a blocking read, only this
+/// can.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Form parameters, ordered the way a real client sends them.
 pub type Params = Vec<(String, String)>;
 
@@ -42,7 +52,8 @@ impl GpClient {
 		let config = tls::client_config(options, trust)?;
 		let client = Client::builder()
 			.user_agent(user_agent)
-			.timeout(Duration::from_secs(60))
+			.connect_timeout(CONNECT_TIMEOUT)
+			.timeout(REQUEST_TIMEOUT)
 			.tls_backend_preconfigured(config)
 			.build()?;
 		Ok(Self { client, log })

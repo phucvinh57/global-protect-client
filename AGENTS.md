@@ -15,7 +15,8 @@ The Rust workspace under `src-tauri/crates/` splits the VPN work in two. `gp-aut
 - `bun run tauri dev` launches the desktop app with hot reload.
 - `bun run build` type-checks TypeScript and creates the frontend production bundle.
 - `bun run dev` then `http://localhost:1420/index.mock.html` renders the window against a stubbed Tauri bridge, so the UI can be reviewed without a portal or root. Query parameters drive it: `state=connected|connecting`, `empty=1`, `theme=dark`, `open=<button label>`. Vite builds only `index.html`, so the harness never ships.
-- `bun run tauri build` builds distributable native packages.
+- `bun run tauri build` builds distributable native packages (`deb` and `rpm`).
+- `bun run scripts/build-helper.ts [--release] [--target <triple>]` builds `gp-helper` and stages it as `src-tauri/binaries/gp-helper-<triple>`. Both `dev:tauri` and `build:tauri` call it, and Tauri's `bundle.externalBin` only ships a sidecar staged under that exact per-triple name; `tauri-build` then copies it next to `gp-client` so `helper_path()` resolves in dev and after install alike. Building the helper with a bare `cargo build` leaves the packaged app spawning a `gp-helper` that was never installed.
 - `bunx biome check .` runs the configured formatter and recommended lint rules; add `--write` to apply safe fixes.
 - `cargo test --manifest-path src-tauri/Cargo.toml --workspace` compiles and runs Rust tests; without `--workspace` the crate tests under `src-tauri/crates/` are skipped.
 - `cargo run -p gp-auth --example probe -- https://<portal> <user> [linux|windows|mac]` exercises the login against a real portal without root, a tunnel or the GUI, printing every request and the server's exact reply (including the `x-private-pan-globalprotect` header that explains an HTTP 512).

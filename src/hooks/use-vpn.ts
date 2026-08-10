@@ -82,7 +82,13 @@ export const useVpn = () => {
 				if (mounted) setGatewayChoice(payload.selecting ? payload.list : null);
 			}),
 			listen<{ msg: string }>("vpn://error", ({ payload }) => {
-				if (mounted) setError({ id: crypto.randomUUID(), msg: payload.msg });
+				if (!mounted) return;
+				setError({ id: crypto.randomUUID(), msg: payload.msg });
+				// The attempt is over: a question still on screen would only
+				// collect an answer nothing is waiting for any more.
+				setCertificate(null);
+				setChallenge(null);
+				setGatewayChoice(null);
 			}),
 		]);
 		// The window can be reopened from the tray long after a tunnel came up.

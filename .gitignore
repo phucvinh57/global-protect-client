@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Staged sidecar built by scripts/build-helper.ts.
+src-tauri/binaries
+
 # VPN credentials and certificate material must stay local.
 *.crt
 *.pem
