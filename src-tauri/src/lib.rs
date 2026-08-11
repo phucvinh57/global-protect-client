@@ -3,7 +3,11 @@ mod helper_process;
 mod settings;
 mod tray;
 
-use std::{sync::Mutex, thread, time::Duration};
+use std::{
+    sync::{Arc, Mutex},
+    thread,
+    time::Duration,
+};
 
 use helper_process::{ActiveProfile, HelperProcess, StatusResponse, VpnRuntime};
 use serde::{Deserialize, Serialize};
@@ -13,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 struct AppState {
     helper: Mutex<Option<HelperProcess>>,
     runtime: VpnRuntime,
+    profiles: Arc<Mutex<Vec<Profile>>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,6 +39,7 @@ struct ProfileView {
     #[serde(flatten)]
     profile: Profile,
     has_saved_password: bool,
+    has_network_stats: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,14 +49,25 @@ struct ProfilesResponse {
     credentials_available: bool,
 }
 
-fn view(profile: Profile) -> ProfileView {
+async fn view(app: &AppHandle, profile: Profile) -> Result<ProfileView, String> {
     let has_saved_password = profile.remember
         && credentials::is_available()
         && credentials::get(&profile.portal, &profile.username).is_some();
-    ProfileView {
+    let has_network_stats = !settings::totals(app, &profile.id).await?.is_zero();
+    Ok(ProfileView {
         profile,
         has_saved_password,
+        has_network_stats,
+    })
+}
+
+async fn reload_profile_cache(app: &AppHandle) -> Result<Vec<Profile>, String> {
+    let profiles = settings::load(app).await?;
+    let state = app.state::<AppState>();
+    if let Ok(mut cached) = state.profiles.lock() {
+        *cached = profiles.clone();
     }
+    Ok(profiles)
 }
 
 /// Answers the question the helper is blocked on, failing when there is no
@@ -79,10 +96,14 @@ fn refresh_tray(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn profiles_load(app: AppHandle) -> Result<ProfilesResponse, String> {
-    let store = settings::load(&app)?;
+async fn profiles_load(app: AppHandle) -> Result<ProfilesResponse, String> {
+    let profiles = reload_profile_cache(&app).await?;
+    let mut views = Vec::with_capacity(profiles.len());
+    for profile in profiles {
+        views.push(view(&app, profile).await?);
+    }
     Ok(ProfilesResponse {
-        profiles: store.profiles.into_iter().map(view).collect(),
+        profiles: views,
         credentials_available: credentials::is_available(),
     })
 }
@@ -90,7 +111,7 @@ fn profiles_load(app: AppHandle) -> Result<ProfilesResponse, String> {
 /// Creates or updates one profile. `password` is only read when the profile
 /// asks to be remembered; it is written to the keyring and never to disk.
 #[tauri::command]
-fn profile_save(
+async fn profile_save(
     app: AppHandle,
     profile: Profile,
     password: Option<String>,
@@ -102,20 +123,15 @@ fn profile_save(
     if profile.name.trim().is_empty() {
         profile.name = settings::default_name(&profile.portal);
     }
-    let mut store = settings::load(&app)?;
-    let previous = store.find(&profile.id).cloned();
-    match store
-        .profiles
-        .iter_mut()
-        .find(|existing| existing.id == profile.id)
-    {
-        Some(existing) => *existing = profile.clone(),
-        None => {
-            profile.id = settings::new_id();
-            store.profiles.push(profile.clone());
-        }
+    let previous = if profile.id.is_empty() {
+        None
+    } else {
+        settings::find(&app, &profile.id).await?
+    };
+    if previous.is_none() {
+        profile.id = settings::new_id();
     }
-    settings::save(&app, &store)?;
+    settings::save(&app, &profile).await?;
 
     // The keyring is addressed by portal and username, so an edit to either
     // would otherwise leave the old secret behind.
@@ -131,24 +147,41 @@ fn profile_save(
     } else if !profile.remember {
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
+    reload_profile_cache(&app).await?;
     refresh_tray(&app);
-    Ok(view(profile))
+    view(&app, profile).await
 }
 
 #[tauri::command]
-fn profile_delete(app: AppHandle, id: String) -> Result<(), String> {
-    let mut store = settings::load(&app)?;
-    if let Some(profile) = store.find(&id).cloned() {
+async fn profile_delete(app: AppHandle, id: String) -> Result<(), String> {
+    if let Some(profile) = settings::find(&app, &id).await? {
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
-    store.profiles.retain(|profile| profile.id != id);
-    settings::save(&app, &store)?;
+    settings::delete(&app, &id).await?;
+    reload_profile_cache(&app).await?;
     refresh_tray(&app);
     Ok(())
 }
 
 #[tauri::command]
-fn vpn_connect(
+async fn profile_reset_stats(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<(), String> {
+    if state.runtime.state() != "disconnected"
+        && state
+            .runtime
+            .profile()
+            .is_some_and(|profile| profile.id == id)
+    {
+        return Err("Disconnect before resetting this connection's statistics".into());
+    }
+    settings::reset_totals(&app, &id).await
+}
+
+#[tauri::command]
+async fn vpn_connect(
     app: AppHandle,
     state: State<'_, AppState>,
     input: ConnectInput,
@@ -156,24 +189,16 @@ fn vpn_connect(
     if state.runtime.state() != "disconnected" {
         return Err("Another connection is already active".into());
     }
-    let mut store = settings::load(&app)?;
-    let mut profile = store
-        .find(&input.profile_id)
-        .cloned()
+    let mut profile = settings::find(&app, &input.profile_id)
+        .await?
         .ok_or("That connection no longer exists")?;
 
     // A prompt may have changed the "remember me" choice for this attempt.
     if let Some(remember) = input.remember {
         if remember != profile.remember {
             profile.remember = remember;
-            if let Some(stored) = store
-                .profiles
-                .iter_mut()
-                .find(|stored| stored.id == profile.id)
-            {
-                stored.remember = remember;
-            }
-            settings::save(&app, &store)?;
+            settings::save(&app, &profile).await?;
+            reload_profile_cache(&app).await?;
         }
     }
 
@@ -191,6 +216,9 @@ fn vpn_connect(
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
 
+    let baseline = settings::totals(&app, &profile.id).await?;
+    state.runtime.start_stats(profile.id.clone(), baseline);
+
     let mut helper = state
         .helper
         .lock()
@@ -207,6 +235,7 @@ fn vpn_connect(
             Ok(spawned) => *helper = Some(spawned),
             Err(error) => {
                 state.runtime.set_profile(None);
+                state.runtime.clear_stats();
                 return Err(error);
             }
         }
@@ -232,6 +261,7 @@ fn vpn_connect(
         }));
     if result.is_err() {
         state.runtime.set_profile(None);
+        state.runtime.clear_stats();
     }
     result
 }
@@ -254,6 +284,7 @@ fn vpn_status(state: State<'_, AppState>) -> StatusResponse {
         state: state.runtime.state(),
         profile_id: state.runtime.profile().map(|profile| profile.id),
         connection: state.runtime.connection(),
+        stats: state.runtime.stats(),
         pending: state.runtime.pending(),
         requested_profile_id: state.runtime.connect_request(),
     }
@@ -270,7 +301,7 @@ fn vpn_clear_connect_request(app: AppHandle, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-fn vpn_trust_cert(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+async fn vpn_trust_cert(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let fingerprint = state
         .runtime
         .last_fingerprint()
@@ -280,16 +311,29 @@ fn vpn_trust_cert(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         .profile()
         .map(|profile| profile.id)
         .ok_or("There is no connection in progress")?;
-    let mut store = settings::load(&app)?;
-    if let Some(profile) = store
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == profile_id)
-    {
+    if let Some(mut profile) = settings::find(&app, &profile_id).await? {
         profile.trusted_fingerprint = Some(fingerprint);
-        settings::save(&app, &store)?;
+        settings::save(&app, &profile).await?;
+        reload_profile_cache(&app).await?;
     }
     answer_prompt(&state, serde_json::json!({ "cmd": "trust_cert" }))
+}
+
+#[tauri::command]
+async fn preferences_load(app: AppHandle) -> Result<serde_json::Value, String> {
+    let theme = settings::preference(&app, "theme")
+        .await?
+        .filter(|theme| matches!(theme.as_str(), "light" | "dark" | "system"))
+        .unwrap_or_else(|| "system".into());
+    Ok(serde_json::json!({ "theme": theme }))
+}
+
+#[tauri::command]
+async fn theme_set(app: AppHandle, theme: String) -> Result<(), String> {
+    if !matches!(theme.as_str(), "light" | "dark" | "system") {
+        return Err("Unsupported theme".into());
+    }
+    settings::set_preference(&app, "theme", &theme).await
 }
 
 #[tauri::command]
@@ -361,14 +405,24 @@ fn quit(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let sql = tauri_plugin_sql::Builder::default()
+        .add_migrations(settings::DATABASE_URL, settings::migrations())
+        .build();
     tauri::Builder::default()
+        .plugin(sql)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             helper: Mutex::new(None),
             runtime: VpnRuntime::new(),
+            profiles: Arc::new(Mutex::new(Vec::new())),
         })
         .setup(|app| {
+            let profiles = tauri::async_runtime::block_on(settings::load(&app.handle().clone()))
+                .map_err(std::io::Error::other)?;
+            if let Ok(mut cached) = app.state::<AppState>().profiles.lock() {
+                *cached = profiles;
+            }
             tray::build(
                 &app.handle().clone(),
                 connect_from_tray,
@@ -381,6 +435,9 @@ pub fn run() {
             profiles_load,
             profile_save,
             profile_delete,
+            profile_reset_stats,
+            preferences_load,
+            theme_set,
             vpn_connect,
             vpn_disconnect,
             vpn_status,

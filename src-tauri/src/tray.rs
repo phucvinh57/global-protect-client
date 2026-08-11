@@ -9,7 +9,7 @@ use tauri::{
     AppHandle, Manager, WebviewWindowBuilder,
 };
 
-use crate::{helper_process::ActiveProfile, settings};
+use crate::{helper_process::ActiveProfile, AppState};
 
 pub const TRAY_ID: &str = "gp-tray";
 /// Prefix on the id of every saved-connection item, so one handler recognises
@@ -85,8 +85,11 @@ fn menu(
     // Every saved connection, so a tunnel can be started from the tray alone.
     // Only one tunnel exists at a time, so none of them can be picked while
     // another is up; the one that is up is the one that is ticked.
-    let profiles = settings::load(app)
-        .map(|store| store.profiles)
+    let profiles = app
+        .state::<AppState>()
+        .profiles
+        .lock()
+        .map(|profiles| profiles.clone())
         .unwrap_or_default();
     if profiles.is_empty() {
         menu.append(&MenuItem::with_id(

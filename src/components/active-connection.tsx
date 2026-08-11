@@ -1,10 +1,10 @@
-import { Copy01, Server01 } from "@untitledui/icons";
+import { Copy01, Server01, TrendDown02, TrendUp02 } from "@untitledui/icons";
 import { useEffect, useState } from "react";
 import { Button as AriaButton } from "react-aria-components";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { useClipboard } from "@/hooks/use-clipboard";
-import type { ConnectionInfo, VpnState } from "@/hooks/use-vpn";
+import type { ConnectionInfo, NetworkCounters, NetworkStats, VpnState } from "@/hooks/use-vpn";
 import { cx } from "@/utils/cx";
 
 type ActiveConnectionProps = {
@@ -12,6 +12,7 @@ type ActiveConnectionProps = {
 	name: string;
 	portal: string;
 	connection: ConnectionInfo | null;
+	stats: NetworkStats | null;
 	onDisconnect: () => void;
 };
 
@@ -36,6 +37,7 @@ export const ActiveConnection = ({
 	name,
 	portal,
 	connection,
+	stats,
 	onDisconnect,
 }: ActiveConnectionProps) => {
 	const connected = state === "connected";
@@ -62,6 +64,7 @@ export const ActiveConnection = ({
 			)}
 
 			{connected && connection && <ConnectionDetails connection={connection} />}
+			{connected && <TrafficStats stats={stats} />}
 			{!connected && (
 				<p className="mt-4 max-w-70 text-center text-xs text-tertiary">
 					{state === "disconnecting"
@@ -83,6 +86,122 @@ export const ActiveConnection = ({
 		</div>
 	);
 };
+
+const emptyCounters: NetworkCounters = {
+	downloadBytes: "0",
+	uploadBytes: "0",
+	downloadPackets: "0",
+	uploadPackets: "0",
+};
+
+const TrafficStats = ({ stats }: { stats: NetworkStats | null }) => {
+	const session = stats?.session ?? emptyCounters;
+	const lifetime = stats?.lifetime ?? emptyCounters;
+	return (
+		<section className="mt-4 w-full bg-primary p-3 ring-1 ring-secondary">
+			<div className="grid grid-cols-2 divide-x divide-secondary">
+				<TrafficDirection
+					icon={TrendDown02}
+					label="Download"
+					rate={stats?.downloadBytesPerSecond ?? 0}
+					sessionBytes={session.downloadBytes}
+					sessionPackets={session.downloadPackets}
+					lifetimeBytes={lifetime.downloadBytes}
+					lifetimePackets={lifetime.downloadPackets}
+				/>
+				<TrafficDirection
+					icon={TrendUp02}
+					label="Upload"
+					rate={stats?.uploadBytesPerSecond ?? 0}
+					sessionBytes={session.uploadBytes}
+					sessionPackets={session.uploadPackets}
+					lifetimeBytes={lifetime.uploadBytes}
+					lifetimePackets={lifetime.uploadPackets}
+				/>
+			</div>
+		</section>
+	);
+};
+
+type TrafficDirectionProps = {
+	icon: typeof TrendDown02;
+	label: string;
+	rate: number;
+	sessionBytes: string;
+	sessionPackets: string;
+	lifetimeBytes: string;
+	lifetimePackets: string;
+};
+
+const TrafficDirection = ({
+	icon: Icon,
+	label,
+	rate,
+	sessionBytes,
+	sessionPackets,
+	lifetimeBytes,
+	lifetimePackets,
+}: TrafficDirectionProps) => (
+	<div className="min-w-0 px-3 first:pl-0 last:pr-0">
+		<p className="flex items-center gap-1.5 text-xs font-medium text-tertiary">
+			<Icon className="size-3.5 text-fg-quaternary" />
+			{label}
+		</p>
+		<p className="mt-0.5 truncate font-mono text-sm font-semibold text-primary tabular-nums">
+			{formatRate(rate)}
+		</p>
+		<TrafficTotal label="Session" bytes={sessionBytes} packets={sessionPackets} />
+		<TrafficTotal label="Lifetime" bytes={lifetimeBytes} packets={lifetimePackets} />
+	</div>
+);
+
+const TrafficTotal = ({
+	label,
+	bytes,
+	packets,
+}: {
+	label: string;
+	bytes: string;
+	packets: string;
+}) => (
+	<div className="mt-2">
+		<p className="text-[10px] font-medium tracking-wide text-quaternary uppercase">{label}</p>
+		<p className="truncate font-mono text-xs text-secondary tabular-nums">{formatBytes(bytes)}</p>
+		<p className="truncate text-[10px] text-quaternary tabular-nums">
+			{formatPackets(packets)} packets
+		</p>
+	</div>
+);
+
+const byteUnits = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"];
+
+const formatBytes = (value: string) => {
+	const bytes = BigInt(value);
+	let divisor = 1n;
+	let unit = 0;
+	while (bytes >= divisor * 1024n && unit < byteUnits.length - 1) {
+		divisor *= 1024n;
+		unit += 1;
+	}
+	if (unit === 0) return `${bytes} B`;
+	const tenths = (bytes * 10n + divisor / 2n) / divisor;
+	const whole = tenths / 10n;
+	const fraction = tenths % 10n;
+	return fraction === 0n
+		? `${whole} ${byteUnits[unit]}`
+		: `${whole}.${fraction} ${byteUnits[unit]}`;
+};
+
+const formatRate = (bytesPerSecond: number) => {
+	const safe = Number.isFinite(bytesPerSecond) ? Math.max(0, Math.round(bytesPerSecond)) : 0;
+	return `${formatBytes(String(safe))}/s`;
+};
+
+const packetFormatter = new Intl.NumberFormat(undefined, {
+	notation: "compact",
+	maximumFractionDigits: 1,
+});
+const formatPackets = (value: string) => packetFormatter.format(BigInt(value));
 
 /** Shield inside a ring that pulses while the connection is still settling. */
 const StatusRing = ({ state }: { state: Exclude<VpnState, "disconnected"> }) => {

@@ -1,5 +1,13 @@
+import { invoke } from "@tauri-apps/api/core";
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+	createContext,
+	useCallback,
+	useContext,
+	useEffect,
+	useLayoutEffect,
+	useState,
+} from "react";
 
 type Theme = "light" | "dark" | "system";
 
@@ -24,21 +32,32 @@ interface ThemeProviderProps {
 	children: ReactNode;
 	darkModeClass?: string;
 	defaultTheme?: Theme;
-	storageKey?: string;
 }
 
 export const ThemeProvider = ({
 	children,
 	defaultTheme = "system",
-	storageKey = "ui-theme",
 	darkModeClass = "dark-mode",
 }: ThemeProviderProps) => {
-	const [theme, setTheme] = useState<Theme>(() => {
-		const savedTheme = localStorage.getItem(storageKey) as Theme | null;
-		return savedTheme || defaultTheme;
-	});
+	const [theme, setCurrentTheme] = useState<Theme>(defaultTheme);
+	const [ready, setReady] = useState(false);
 
 	useEffect(() => {
+		let mounted = true;
+		void invoke<{ theme: Theme }>("preferences_load")
+			.then((preferences) => {
+				if (mounted) setCurrentTheme(preferences.theme);
+			})
+			.catch(() => undefined)
+			.finally(() => {
+				if (mounted) setReady(true);
+			});
+		return () => {
+			mounted = false;
+		};
+	}, []);
+
+	useLayoutEffect(() => {
 		const applyTheme = () => {
 			const root = document.documentElement;
 
@@ -48,10 +67,8 @@ export const ThemeProvider = ({
 					: "light";
 
 				root.classList.toggle(darkModeClass, systemTheme === "dark");
-				localStorage.removeItem(storageKey);
 			} else {
 				root.classList.toggle(darkModeClass, theme === "dark");
-				localStorage.setItem(storageKey, theme);
 			}
 		};
 
@@ -66,7 +83,13 @@ export const ThemeProvider = ({
 
 		mediaQuery.addEventListener("change", handleChange);
 		return () => mediaQuery.removeEventListener("change", handleChange);
-	}, [darkModeClass, storageKey, theme]);
+	}, [darkModeClass, theme]);
 
+	const setTheme = useCallback((next: Theme) => {
+		setCurrentTheme(next);
+		void invoke("theme_set", { theme: next }).catch(() => undefined);
+	}, []);
+
+	if (!ready) return null;
 	return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;
 };

@@ -127,16 +127,14 @@ const ToastViewport = ({
 	toasts: Toast[];
 	onDismiss: (id: string) => void;
 }) => (
-	// Anchored below the header rather than at the bottom, where they would sit
-	// on top of the disconnect button at exactly the moment it is needed.
-	<div className="pointer-events-none fixed inset-x-0 top-12 z-100 flex flex-col items-center gap-1.5 px-3">
+	<div className="pointer-events-none fixed inset-x-0 bottom-3 z-100 flex flex-col items-end gap-1.5 px-3">
 		{toasts.map((toast) => (
 			<div
 				key={toast.id}
 				role={toast.tone === "error" ? "alert" : "status"}
 				className={cx(
 					"pointer-events-auto flex w-full max-w-92 items-start gap-2.5 bg-primary p-2.5 shadow-lg ring-1 ring-secondary_alt",
-					"animate-in fade-in slide-in-from-top-3 duration-200 ease-out",
+					"animate-in fade-in slide-in-from-bottom-3 duration-200 ease-out",
 				)}
 			>
 				<span className="mt-px shrink-0">{icons[toast.tone]}</span>

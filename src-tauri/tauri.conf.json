@@ -23,6 +23,11 @@
       "csp": null
     }
   },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:gp-client.db"]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["deb", "rpm"],

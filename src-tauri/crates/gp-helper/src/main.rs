@@ -10,15 +10,15 @@ mod prompt;
 use std::{
 	io::{self, BufRead, Write},
 	sync::{
-		atomic::{AtomicUsize, Ordering},
+		atomic::{AtomicBool, AtomicUsize, Ordering},
 		Arc, Mutex,
 	},
-	thread::JoinHandle,
+	thread::{self, JoinHandle},
 	time::Duration,
 };
 
 use gp_auth::{Answer, AuthRequest, ClientOs, Question, TlsOptions};
-use openconnect::{sys, Callbacks, CancelHandle, Options, Vpn};
+use openconnect::{sys, Callbacks, CancelHandle, Options, TrafficStats, Vpn};
 use serde::{Deserialize, Serialize};
 
 use deadline::Deadline;
@@ -80,6 +80,7 @@ enum Event {
 	MfaChallenge { message: String },
 	Gateways { list: Vec<GatewayInfo>, selecting: bool },
 	Connected { ifname: String, addr: Option<String>, dns: Vec<String>, gateway: String },
+	Stats { rx_bytes: u64, tx_bytes: u64, rx_packets: u64, tx_packets: u64 },
 	Error { msg: String },
 }
 
@@ -183,6 +184,14 @@ impl ConnectionControl {
 		if let Ok(current) = self.0.lock() {
 			if let Some(handle) = current.as_ref() {
 				handle.cancel();
+			}
+		}
+	}
+
+	fn request_stats(&self) {
+		if let Ok(current) = self.0.lock() {
+			if let Some(handle) = current.as_ref() {
+				handle.request_stats();
 			}
 		}
 	}
@@ -299,6 +308,15 @@ impl Callbacks for TunnelCallbacks {
 			1
 		}
 	}
+
+	fn stats(&mut self, stats: TrafficStats) {
+		self.emitter.emit(Event::Stats {
+			rx_bytes: stats.rx_bytes,
+			tx_bytes: stats.tx_bytes,
+			rx_packets: stats.rx_packets,
+			tx_packets: stats.tx_packets,
+		});
+	}
 }
 
 fn run_connection(
@@ -383,7 +401,23 @@ fn run_connection(
 			gateway: session.gateway_name.clone(),
 		});
 		emitter.emit(Event::State { state: "connected" });
+		let polling = Arc::new(AtomicBool::new(true));
+		let poll_flag = polling.clone();
+		let poll_control = control.clone();
+		let stats_worker = thread::spawn(move || {
+			while poll_flag.load(Ordering::SeqCst) {
+				poll_control.request_stats();
+				for _ in 0..10 {
+					thread::sleep(Duration::from_millis(100));
+					if !poll_flag.load(Ordering::SeqCst) {
+						break;
+					}
+				}
+			}
+		});
 		let exit = vpn.mainloop();
+		polling.store(false, Ordering::SeqCst);
+		let _ = stats_worker.join();
 		if exit != 0 {
 			emitter.log("info", format!("VPN loop ended: {exit}"));
 		}
@@ -527,6 +561,10 @@ fn main() {
 			Command::Disconnect => {
 				emitter.emit(Event::State { state: "disconnecting" });
 				prompts.cancel_all();
+				// Give the main loop one last opportunity to deliver counters before
+				// cancellation tears down its command pipe.
+				control.request_stats();
+				thread::sleep(Duration::from_millis(100));
 				control.cancel();
 				if let Some(thread) = worker.take() {
 					let _ = thread.join();

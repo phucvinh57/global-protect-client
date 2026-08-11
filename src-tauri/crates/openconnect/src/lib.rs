@@ -69,9 +69,18 @@ pub fn find_hip_script() -> Option<&'static str> {
 pub trait Callbacks: Send {
 	fn progress(&mut self, level: i32, message: &str);
 	fn validate_peer_cert(&mut self, vpninfo: *mut sys::openconnect_info, reason: &str) -> i32;
+	fn stats(&mut self, _stats: TrafficStats) {}
 	fn write_new_config(&mut self, _contents: &[u8]) -> i32 {
 		0
 	}
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TrafficStats {
+	pub tx_packets: u64,
+	pub tx_bytes: u64,
+	pub rx_packets: u64,
+	pub rx_bytes: u64,
 }
 
 /// Cooperative cancellation usable by a thread other than the VPN worker.
@@ -87,13 +96,26 @@ enum CancelFd {
 
 impl CancelHandle {
 	pub fn cancel(&self) {
+		self.command(sys::OC_CMD_CANCEL);
+	}
+
+	/// Asks libopenconnect to deliver a cumulative traffic snapshot through
+	/// the registered stats callback. It is only meaningful after the command
+	/// pipe has replaced the authentication cancel pipe.
+	pub fn request_stats(&self) {
+		self.command(sys::OC_CMD_STATS);
+	}
+
+	fn command(&self, command: u8) {
 		if let Ok(guard) = self.0.lock() {
-			if let Some(fd) = guard.as_ref().map(|fd| match fd {
-				CancelFd::Auth(fd) | CancelFd::Command(fd) => *fd,
-			}) {
-				// OC_CMD_CANCEL is deliberately a one-byte command.
+			let fd = match (guard.as_ref(), command) {
+				(Some(CancelFd::Auth(fd)), sys::OC_CMD_CANCEL) => Some(*fd),
+				(Some(CancelFd::Command(fd)), _) => Some(*fd),
+				_ => None,
+			};
+			if let Some(fd) = fd {
 				unsafe {
-					libc::write(fd, b"x".as_ptr().cast(), 1);
+					libc::write(fd, (&command as *const u8).cast(), 1);
 				}
 			}
 		}
@@ -156,6 +178,7 @@ impl<'a> Vpn<'a> {
 			return Err("openconnect_vpninfo_new failed".into());
 		}
 		unsafe { sys::openconnect_set_cancel_fd(info, fds[0]) };
+		unsafe { sys::openconnect_set_stats_handler(info, Some(receive_stats)) };
 		callback_context.vpninfo = info;
 		Ok(Self {
 			info,
@@ -406,6 +429,22 @@ unsafe extern "C" fn write_new_config(
 		callbacks.write_new_config(contents)
 	}))
 	.unwrap_or(-1)
+}
+
+unsafe extern "C" fn receive_stats(privdata: *mut libc::c_void, stats: *const sys::oc_stats) {
+	let _ = catch_unwind(AssertUnwindSafe(|| {
+		if privdata.is_null() || stats.is_null() {
+			return;
+		}
+		let context = unsafe { &mut *privdata.cast::<CallbackContext>() };
+		let stats = unsafe { &*stats };
+		unsafe { &mut *context.callbacks }.stats(TrafficStats {
+			tx_packets: stats.tx_pkts,
+			tx_bytes: stats.tx_bytes,
+			rx_packets: stats.rx_pkts,
+			rx_bytes: stats.rx_bytes,
+		});
+	}));
 }
 
 /// Reached only if libopenconnect tries to authenticate, which the cookie is

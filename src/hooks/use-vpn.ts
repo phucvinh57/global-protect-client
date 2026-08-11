@@ -18,6 +18,18 @@ export type ConnectionInfo = {
 	dns: string[];
 	gateway: string;
 };
+export type NetworkCounters = {
+	downloadBytes: string;
+	uploadBytes: string;
+	downloadPackets: string;
+	uploadPackets: string;
+};
+export type NetworkStats = {
+	downloadBytesPerSecond: number;
+	uploadBytesPerSecond: number;
+	session: NetworkCounters;
+	lifetime: NetworkCounters;
+};
 
 export type ConnectRequest = {
 	profileId: string;
@@ -46,6 +58,7 @@ type StatusResponse = {
 	state: VpnState;
 	profileId: string | null;
 	connection: ConnectionInfo | null;
+	stats: NetworkStats | null;
 	pending: PendingPrompt | null;
 	/** Set when the tray asked for a connection this window has yet to run. */
 	requestedProfileId: string | null;
@@ -60,6 +73,7 @@ export const useVpn = () => {
 	const [state, setState] = useState<VpnState>("disconnected");
 	const [profileId, setProfileId] = useState<string | null>(null);
 	const [connection, setConnection] = useState<ConnectionInfo | null>(null);
+	const [stats, setStats] = useState<NetworkStats | null>(null);
 	const [certificate, setCertificate] = useState<CertificatePrompt | null>(null);
 	const [challenge, setChallenge] = useState<MfaPrompt | null>(null);
 	// Set only while the helper is blocked waiting for a gateway choice.
@@ -84,10 +98,14 @@ export const useVpn = () => {
 					setChallenge(null);
 					setGatewayChoice(null);
 					setConnection(null);
+					setStats(null);
 				}
 			}),
 			listen<ConnectionInfo>("vpn://connected", ({ payload }) => {
 				if (mounted) setConnection(payload);
+			}),
+			listen<NetworkStats>("vpn://stats", ({ payload }) => {
+				if (mounted) setStats(payload);
 			}),
 			listen<CertificatePrompt>("vpn://cert-untrusted", ({ payload }) => {
 				if (mounted) setCertificate(payload);
@@ -121,6 +139,7 @@ export const useVpn = () => {
 			setState(status.state);
 			setProfileId(status.profileId);
 			setConnection(status.connection);
+			setStats(status.stats);
 			switch (status.pending?.kind) {
 				case "certificate":
 					setCertificate(status.pending);
@@ -185,6 +204,7 @@ export const useVpn = () => {
 		ready,
 		profileId,
 		connection,
+		stats,
 		certificate,
 		challenge,
 		gatewayChoice,
