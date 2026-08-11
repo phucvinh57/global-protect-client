@@ -166,6 +166,31 @@ export const useVpn = () => {
 		};
 	}, []);
 
+	// Stats are cached by the process-level runtime, not by this webview. Keep
+	// reading that snapshot while connected so a window rebuilt from the tray
+	// does not depend solely on transient events emitted while no window was
+	// listening.
+	useEffect(() => {
+		if (state !== "connected") return;
+		let active = true;
+		const refresh = () => {
+			void invoke<NetworkStats | null>("vpn_stats").then(
+				(snapshot) => {
+					if (active && snapshot) setStats(snapshot);
+				},
+				() => {
+					// The webview may be going away while this request is in flight.
+				},
+			);
+		};
+		refresh();
+		const interval = window.setInterval(refresh, 1_000);
+		return () => {
+			active = false;
+			window.clearInterval(interval);
+		};
+	}, [state]);
+
 	const connect = useCallback(async (request: ConnectRequest) => {
 		setError(null);
 		await invoke("vpn_connect", { input: request });

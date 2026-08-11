@@ -31,7 +31,7 @@ export const MfaDialog = ({ message, onCancel, onSubmit }: MfaDialogProps) => {
 					autoFocus
 					isRequired
 					label="Code"
-					type="password"
+					type="text"
 					autoComplete="one-time-code"
 					inputMode="numeric"
 					value={code}

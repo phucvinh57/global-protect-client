@@ -1,14 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Not connected">
 	<title>Not connected</title>
-	<!-- The open network is still there; only the tunnel is gone. -->
-	<g stroke="#8D8A9E" stroke-opacity="0.55" stroke-width="2.5" stroke-linecap="butt">
-		<line x1="0" y1="28.5" x2="12.5" y2="28.5"/>
-		<line x1="23.5" y1="28.5" x2="40.5" y2="28.5"/>
-		<line x1="51.5" y1="28.5" x2="64" y2="28.5"/>
-	</g>
-	<!-- Tunnel severed at the lowest point of the run. -->
-	<g fill="none" stroke="#8D8A9E" stroke-width="6" stroke-linecap="butt" stroke-linejoin="round">
-		<path d="M -3 15.5 H 13 Q 18 15.5 18 20.5 V 44 Q 18 48.5 22.5 48.5 H 27"/>
-		<path d="M 67 15.5 H 51 Q 46 15.5 46 20.5 V 44 Q 46 48.5 41.5 48.5 H 37"/>
-	</g>
+	<!-- Same plate, same fold — but the cut now runs the full height and the plate falls open. -->
+	<defs>
+		<mask id="plate-off">
+			<path d="M 12 15 L 19 7 L 45 7 L 52 15 L 52 37 C 52 47 43.6 53.8 32 57 C 20.4 53.8 12 47 12 37 Z" fill="#FFFFFF"/>
+			<rect x="29.7" y="3" width="4.6" height="58" fill="#000000"/>
+		</mask>
+	</defs>
+	<rect x="8" y="4" width="48" height="56" fill="#8D8A9E" mask="url(#plate-off)"/>
 </svg>

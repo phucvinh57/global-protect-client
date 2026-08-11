@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="gp-client">
 	<title>gp-client</title>
-	<desc>A route that leaves the open network, runs beneath it, and rejoins it further along.</desc>
+	<desc>A guard's plate, folded down its centre ridge, with a watch slit cut into the fold. The slit stops short of both ends: the plate holds.</desc>
 	<defs>
 		<linearGradient id="ground" x1="0" y1="0" x2="1" y2="1">
 			<stop offset="0" stop-color="#6941C6"/>
@@ -8,32 +8,31 @@
 			<stop offset="1" stop-color="#2C1C5F"/>
 		</linearGradient>
 		<radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-			<stop offset="0" stop-color="#B692F6" stop-opacity="0.32"/>
-			<stop offset="0.6" stop-color="#B692F6" stop-opacity="0.09"/>
+			<stop offset="0" stop-color="#B692F6" stop-opacity="0.34"/>
+			<stop offset="0.6" stop-color="#B692F6" stop-opacity="0.1"/>
 			<stop offset="1" stop-color="#B692F6" stop-opacity="0"/>
 		</radialGradient>
-		<clipPath id="plate">
+		<clipPath id="tile">
 			<rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
 		</clipPath>
+		<!-- The plate, less the watch slit cut into its fold. -->
+		<mask id="plate">
+			<path d="M 128 152 L 172 100 L 340 100 L 384 152 L 384 292 C 384 356 330 396 256 420 C 182 396 128 356 128 292 Z" fill="#FFFFFF"/>
+			<rect x="243" y="164" width="26" height="130" rx="6" ry="6" fill="#000000"/>
+		</mask>
 	</defs>
 
-	<g clip-path="url(#plate)">
+	<g clip-path="url(#tile)">
 		<rect x="0" y="0" width="512" height="512" fill="url(#ground)"/>
 
-		<!-- Lit from inside the run: glow centred on its lowest point. -->
-		<rect x="16" y="148" width="480" height="480" fill="url(#glow)"/>
+		<!-- Lit from behind the plate, centred on the slit. -->
+		<rect x="-4" y="-26" width="520" height="520" fill="url(#glow)"/>
 
-		<!-- The open network. It runs past both edges, and breaks where the
-		     tunnel crosses it: passing through, not joining. -->
-		<g stroke="#B692F6" stroke-opacity="0.75" stroke-width="24" stroke-linecap="butt">
-			<line x1="0" y1="228" x2="104" y2="228"/>
-			<line x1="188" y1="228" x2="324" y2="228"/>
-			<line x1="408" y1="228" x2="512" y2="228"/>
+		<!-- Two facets of one fold: light rakes across the left, falls off the right. -->
+		<g mask="url(#plate)">
+			<rect x="120" y="92" width="136" height="336" fill="#F4EBFF"/>
+			<rect x="256" y="92" width="136" height="336" fill="#D6BBFB"/>
 		</g>
-
-		<!-- The tunnel: down off the open network, along beneath it, back up. -->
-		<path d="M -20 124 H 104 Q 146 124 146 166 V 338 Q 146 388 196 388 H 316 Q 366 388 366 338 V 166 Q 366 124 408 124 H 532"
-			fill="none" stroke="#F4EBFF" stroke-width="48" stroke-linecap="butt" stroke-linejoin="round"/>
 	</g>
 
 	<rect x="1.5" y="1.5" width="509" height="509" rx="110.5" ry="110.5"

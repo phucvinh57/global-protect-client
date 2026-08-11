@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Connected">
 	<title>Connected</title>
-	<!-- The open network. -->
-	<g stroke="#16B364" stroke-opacity="0.55" stroke-width="2.5" stroke-linecap="butt">
-		<line x1="0" y1="28.5" x2="12.5" y2="28.5"/>
-		<line x1="23.5" y1="28.5" x2="40.5" y2="28.5"/>
-		<line x1="51.5" y1="28.5" x2="64" y2="28.5"/>
-	</g>
-	<!-- Tunnel carried end to end. -->
-	<path d="M -3 15.5 H 13 Q 18 15.5 18 20.5 V 44 Q 18 48.5 22.5 48.5 H 41.5 Q 46 48.5 46 44 V 20.5 Q 46 15.5 51 15.5 H 67"
-		fill="none" stroke="#16B364" stroke-width="6" stroke-linecap="butt" stroke-linejoin="round"/>
+	<!-- The watch slit stops short of both ends: the plate holds.
+	     Slit is widened slightly against the app icon's ratio so it survives a 16px tray. -->
+	<defs>
+		<mask id="plate-on">
+			<path d="M 12 15 L 19 7 L 45 7 L 52 15 L 52 37 C 52 47 43.6 53.8 32 57 C 20.4 53.8 12 47 12 37 Z" fill="#FFFFFF"/>
+			<rect x="29.7" y="16.8" width="4.6" height="21" rx="1.2" ry="1.2" fill="#000000"/>
+		</mask>
+	</defs>
+	<rect x="8" y="4" width="48" height="56" fill="#16B364" mask="url(#plate-on)"/>
 </svg>

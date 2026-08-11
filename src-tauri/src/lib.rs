@@ -290,6 +290,15 @@ fn vpn_status(state: State<'_, AppState>) -> StatusResponse {
     }
 }
 
+/// Returns the latest process-owned traffic snapshot. Stats events keep an
+/// existing window responsive, while this command lets a rebuilt window
+/// resynchronize without depending on an event that may have been emitted
+/// before its webview existed.
+#[tauri::command]
+fn vpn_stats(state: State<'_, AppState>) -> Option<helper_process::NetworkStats> {
+    state.runtime.stats()
+}
+
 /// Forgets the tray's connection request once a window has taken it on, so a
 /// window opened later never starts the same attempt a second time. The tray
 /// is repainted with it: clicking one of its connections ticks that item, and
@@ -441,6 +450,7 @@ pub fn run() {
             vpn_connect,
             vpn_disconnect,
             vpn_status,
+            vpn_stats,
             vpn_clear_connect_request,
             vpn_trust_cert,
             vpn_reject_cert,
