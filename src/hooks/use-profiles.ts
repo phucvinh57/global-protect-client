@@ -19,12 +19,10 @@ export type Profile = {
 	requiresOtp: boolean;
 	/** Whether the keyring currently holds a password for this profile. */
 	hasSavedPassword: boolean;
-	/** Whether this profile has non-zero lifetime traffic totals. */
-	hasNetworkStats: boolean;
 };
 
 /** What a profile looks like before the backend has given it an id. */
-export type ProfileDraft = Omit<Profile, "id" | "hasSavedPassword" | "hasNetworkStats"> & {
+export type ProfileDraft = Omit<Profile, "id" | "hasSavedPassword"> & {
 	id: string;
 };
 
@@ -81,13 +79,5 @@ export const useProfiles = () => {
 		[reload],
 	);
 
-	const resetStats = useCallback(
-		async (id: string) => {
-			await invoke("profile_reset_stats", { id });
-			await reload();
-		},
-		[reload],
-	);
-
-	return { profiles, credentialsAvailable, loading, reload, save, remove, resetStats };
+	return { profiles, credentialsAvailable, loading, reload, save, remove };
 };

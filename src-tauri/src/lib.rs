@@ -39,7 +39,6 @@ struct ProfileView {
     #[serde(flatten)]
     profile: Profile,
     has_saved_password: bool,
-    has_network_stats: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,16 +48,14 @@ struct ProfilesResponse {
     credentials_available: bool,
 }
 
-async fn view(app: &AppHandle, profile: Profile) -> Result<ProfileView, String> {
+fn view(profile: Profile) -> ProfileView {
     let has_saved_password = profile.remember
         && credentials::is_available()
         && credentials::get(&profile.portal, &profile.username).is_some();
-    let has_network_stats = !settings::totals(app, &profile.id).await?.is_zero();
-    Ok(ProfileView {
+    ProfileView {
         profile,
         has_saved_password,
-        has_network_stats,
-    })
+    }
 }
 
 async fn reload_profile_cache(app: &AppHandle) -> Result<Vec<Profile>, String> {
@@ -100,7 +97,7 @@ async fn profiles_load(app: AppHandle) -> Result<ProfilesResponse, String> {
     let profiles = reload_profile_cache(&app).await?;
     let mut views = Vec::with_capacity(profiles.len());
     for profile in profiles {
-        views.push(view(&app, profile).await?);
+        views.push(view(profile));
     }
     Ok(ProfilesResponse {
         profiles: views,
@@ -149,7 +146,7 @@ async fn profile_save(
     }
     reload_profile_cache(&app).await?;
     refresh_tray(&app);
-    view(&app, profile).await
+    Ok(view(profile))
 }
 
 #[tauri::command]
@@ -161,23 +158,6 @@ async fn profile_delete(app: AppHandle, id: String) -> Result<(), String> {
     reload_profile_cache(&app).await?;
     refresh_tray(&app);
     Ok(())
-}
-
-#[tauri::command]
-async fn profile_reset_stats(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
-    if state.runtime.state() != "disconnected"
-        && state
-            .runtime
-            .profile()
-            .is_some_and(|profile| profile.id == id)
-    {
-        return Err("Disconnect before resetting this connection's statistics".into());
-    }
-    settings::reset_totals(&app, &id).await
 }
 
 #[tauri::command]
@@ -216,9 +196,6 @@ async fn vpn_connect(
         let _ = credentials::delete(&profile.portal, &profile.username);
     }
 
-    let baseline = settings::totals(&app, &profile.id).await?;
-    state.runtime.start_stats(profile.id.clone(), baseline);
-
     let mut helper = state
         .helper
         .lock()
@@ -235,7 +212,6 @@ async fn vpn_connect(
             Ok(spawned) => *helper = Some(spawned),
             Err(error) => {
                 state.runtime.set_profile(None);
-                state.runtime.clear_stats();
                 return Err(error);
             }
         }
@@ -261,7 +237,6 @@ async fn vpn_connect(
         }));
     if result.is_err() {
         state.runtime.set_profile(None);
-        state.runtime.clear_stats();
     }
     result
 }
@@ -284,19 +259,9 @@ fn vpn_status(state: State<'_, AppState>) -> StatusResponse {
         state: state.runtime.state(),
         profile_id: state.runtime.profile().map(|profile| profile.id),
         connection: state.runtime.connection(),
-        stats: state.runtime.stats(),
         pending: state.runtime.pending(),
         requested_profile_id: state.runtime.connect_request(),
     }
-}
-
-/// Returns the latest process-owned traffic snapshot. Stats events keep an
-/// existing window responsive, while this command lets a rebuilt window
-/// resynchronize without depending on an event that may have been emitted
-/// before its webview existed.
-#[tauri::command]
-fn vpn_stats(state: State<'_, AppState>) -> Option<helper_process::NetworkStats> {
-    state.runtime.stats()
 }
 
 /// Forgets the tray's connection request once a window has taken it on, so a
@@ -444,13 +409,11 @@ pub fn run() {
             profiles_load,
             profile_save,
             profile_delete,
-            profile_reset_stats,
             preferences_load,
             theme_set,
             vpn_connect,
             vpn_disconnect,
             vpn_status,
-            vpn_stats,
             vpn_clear_connect_request,
             vpn_trust_cert,
             vpn_reject_cert,

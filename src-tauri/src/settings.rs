@@ -40,25 +40,12 @@ pub struct Profile {
     pub requires_otp: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct NetworkTotals {
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub rx_packets: u64,
-    pub tx_packets: u64,
-}
-
-impl NetworkTotals {
-    pub fn is_zero(self) -> bool {
-        self == Self::default()
-    }
-}
-
 pub fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "create application data",
-        sql: r#"
+    vec![
+        Migration {
+            version: 1,
+            description: "create application data",
+            sql: r#"
             CREATE TABLE IF NOT EXISTS profiles (
                 id TEXT PRIMARY KEY NOT NULL,
                 position INTEGER NOT NULL UNIQUE,
@@ -90,8 +77,15 @@ pub fn migrations() -> Vec<Migration> {
                 value TEXT NOT NULL
             );
         "#,
-        kind: MigrationKind::Up,
-    }]
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "remove network totals",
+            sql: "DROP TABLE IF EXISTS network_totals;",
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 pub fn new_id() -> String {
@@ -228,76 +222,8 @@ async fn next_or_existing_position(
 }
 
 pub async fn delete(app: &AppHandle, id: &str) -> Result<(), String> {
-    let pool = pool(app).await?;
-    let mut transaction = pool.begin().await.map_err(|error| error.to_string())?;
-    sqlx::query("DELETE FROM network_totals WHERE profile_id = ?")
-        .bind(id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| error.to_string())?;
     sqlx::query("DELETE FROM profiles WHERE id = ?")
         .bind(id)
-        .execute(&mut *transaction)
-        .await
-        .map_err(|error| error.to_string())?;
-    transaction
-        .commit()
-        .await
-        .map_err(|error| error.to_string())
-}
-
-fn parse_counter(value: String) -> Result<u64, String> {
-    value
-        .parse()
-        .map_err(|_| "Stored network statistic is invalid".to_string())
-}
-
-pub async fn totals(app: &AppHandle, profile_id: &str) -> Result<NetworkTotals, String> {
-    let row = sqlx::query(
-        "SELECT rx_bytes, tx_bytes, rx_packets, tx_packets FROM network_totals WHERE profile_id = ?",
-    )
-    .bind(profile_id)
-    .fetch_optional(&pool(app).await?)
-    .await
-    .map_err(|error| error.to_string())?;
-    let Some(row) = row else {
-        return Ok(NetworkTotals::default());
-    };
-    Ok(NetworkTotals {
-        rx_bytes: parse_counter(row.get("rx_bytes"))?,
-        tx_bytes: parse_counter(row.get("tx_bytes"))?,
-        rx_packets: parse_counter(row.get("rx_packets"))?,
-        tx_packets: parse_counter(row.get("tx_packets"))?,
-    })
-}
-
-pub async fn set_totals(
-    app: &AppHandle,
-    profile_id: &str,
-    totals: NetworkTotals,
-) -> Result<(), String> {
-    sqlx::query(
-        r#"INSERT INTO network_totals (
-            profile_id, rx_bytes, tx_bytes, rx_packets, tx_packets
-        ) VALUES (?, ?, ?, ?, ?)
-        ON CONFLICT(profile_id) DO UPDATE SET
-            rx_bytes = excluded.rx_bytes, tx_bytes = excluded.tx_bytes,
-            rx_packets = excluded.rx_packets, tx_packets = excluded.tx_packets"#,
-    )
-    .bind(profile_id)
-    .bind(totals.rx_bytes.to_string())
-    .bind(totals.tx_bytes.to_string())
-    .bind(totals.rx_packets.to_string())
-    .bind(totals.tx_packets.to_string())
-    .execute(&pool(app).await?)
-    .await
-    .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
-pub async fn reset_totals(app: &AppHandle, profile_id: &str) -> Result<(), String> {
-    sqlx::query("DELETE FROM network_totals WHERE profile_id = ?")
-        .bind(profile_id)
         .execute(&pool(app).await?)
         .await
         .map_err(|error| error.to_string())?;
@@ -331,17 +257,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schema_migration_builds_every_application_table() {
+    fn fresh_migrations_build_only_current_application_tables() {
         tauri::async_runtime::block_on(async {
             let pool = SqlitePoolOptions::new()
                 .max_connections(1)
                 .connect("sqlite::memory:")
                 .await
                 .expect("in-memory database");
-            sqlx::raw_sql(migrations()[0].sql)
-                .execute(&pool)
-                .await
-                .expect("schema migration");
+            for migration in migrations() {
+                sqlx::raw_sql(migration.sql)
+                    .execute(&pool)
+                    .await
+                    .expect("schema migration");
+            }
 
             let names: Vec<String> = sqlx::query_scalar(
                 "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE '_sqlx%' ORDER BY name",
@@ -349,14 +277,65 @@ mod tests {
             .fetch_all(&pool)
             .await
             .expect("table list");
-            assert_eq!(names, ["network_totals", "preferences", "profiles"]);
+            assert_eq!(names, ["preferences", "profiles"]);
         });
     }
 
     #[test]
-    fn counters_preserve_the_full_unsigned_range_as_text() {
-        assert_eq!(parse_counter(u64::MAX.to_string()), Ok(u64::MAX));
-        assert!(parse_counter("-1".into()).is_err());
+    fn upgrading_version_one_drops_totals_and_keeps_application_data() {
+        tauri::async_runtime::block_on(async {
+            let pool = SqlitePoolOptions::new()
+                .max_connections(1)
+                .connect("sqlite::memory:")
+                .await
+                .expect("in-memory database");
+            let migrations = migrations();
+            sqlx::raw_sql(migrations[0].sql)
+                .execute(&pool)
+                .await
+                .expect("version one migration");
+            sqlx::query(
+                "INSERT INTO profiles (id, position, name, portal, username) VALUES ('profile', 0, 'Work', 'vpn.example.test', 'user')",
+            )
+            .execute(&pool)
+            .await
+            .expect("profile fixture");
+            sqlx::query("INSERT INTO preferences (key, value) VALUES ('theme', 'dark')")
+                .execute(&pool)
+                .await
+                .expect("preference fixture");
+            sqlx::query(
+                "INSERT INTO network_totals (profile_id, rx_bytes) VALUES ('profile', '123')",
+            )
+            .execute(&pool)
+            .await
+            .expect("network totals fixture");
+
+            sqlx::raw_sql(migrations[1].sql)
+                .execute(&pool)
+                .await
+                .expect("version two migration");
+
+            let names: Vec<String> = sqlx::query_scalar(
+                "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE '_sqlx%' ORDER BY name",
+            )
+            .fetch_all(&pool)
+            .await
+            .expect("table list");
+            assert_eq!(names, ["preferences", "profiles"]);
+            let profile_name: String =
+                sqlx::query_scalar("SELECT name FROM profiles WHERE id = 'profile'")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("retained profile");
+            let theme: String =
+                sqlx::query_scalar("SELECT value FROM preferences WHERE key = 'theme'")
+                    .fetch_one(&pool)
+                    .await
+                    .expect("retained preference");
+            assert_eq!(profile_name, "Work");
+            assert_eq!(theme, "dark");
+        });
     }
 
     #[test]

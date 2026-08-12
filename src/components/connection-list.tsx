@@ -1,12 +1,4 @@
-import {
-	BarChartSquareMinus,
-	DotsVertical,
-	Edit01,
-	Lock01,
-	Plus,
-	Shield01,
-	Trash01,
-} from "@untitledui/icons";
+import { DotsVertical, Edit01, Lock01, Plus, Shield01, Trash01 } from "@untitledui/icons";
 import { useState } from "react";
 import { Button as AriaButton, Menu, MenuItem, MenuTrigger, Popover } from "react-aria-components";
 import { Button } from "@/components/ui/button";
@@ -20,7 +12,6 @@ type ConnectionListProps = {
 	onCreate: () => void;
 	onEdit: (profile: Profile) => void;
 	onDelete: (profile: Profile) => void;
-	onResetStats: (profile: Profile) => void;
 };
 
 export const ConnectionList = ({
@@ -30,10 +21,8 @@ export const ConnectionList = ({
 	onCreate,
 	onEdit,
 	onDelete,
-	onResetStats,
 }: ConnectionListProps) => {
 	const [pendingDelete, setPendingDelete] = useState<Profile | null>(null);
-	const [pendingReset, setPendingReset] = useState<Profile | null>(null);
 
 	if (loading) {
 		return (
@@ -59,7 +48,6 @@ export const ConnectionList = ({
 							onConnect={() => onConnect(profile)}
 							onEdit={() => onEdit(profile)}
 							onDelete={() => setPendingDelete(profile)}
-							onResetStats={() => setPendingReset(profile)}
 						/>
 					</li>
 				))}
@@ -88,30 +76,6 @@ export const ConnectionList = ({
 					</ModalActions>
 				</ModalShell>
 			)}
-
-			{pendingReset && (
-				<ModalShell
-					icon={BarChartSquareMinus}
-					tone="warning"
-					title={`Reset statistics for “${pendingReset.name}”?`}
-					description="Lifetime upload, download, and packet totals will return to zero. This cannot be undone."
-				>
-					<ModalActions>
-						<Button variant="secondary" onPress={() => setPendingReset(null)}>
-							Cancel
-						</Button>
-						<Button
-							variant="destructive"
-							onPress={() => {
-								onResetStats(pendingReset);
-								setPendingReset(null);
-							}}
-						>
-							Reset statistics
-						</Button>
-					</ModalActions>
-				</ModalShell>
-			)}
 		</>
 	);
 };
@@ -121,7 +85,6 @@ type ConnectionRowProps = {
 	onConnect: () => void;
 	onEdit: () => void;
 	onDelete: () => void;
-	onResetStats: () => void;
 };
 
 /**
@@ -129,13 +92,7 @@ type ConnectionRowProps = {
  * button keeps that target one element while leaving the row's own menu
  * button clickable above it.
  */
-const ConnectionRow = ({
-	profile,
-	onConnect,
-	onEdit,
-	onDelete,
-	onResetStats,
-}: ConnectionRowProps) => (
+const ConnectionRow = ({ profile, onConnect, onEdit, onDelete }: ConnectionRowProps) => (
 	<div className="relative flex items-center gap-2 bg-primary px-3 py-2 transition duration-100 ease-linear hover:bg-secondary">
 		<AriaButton
 			aria-label={`Connect to ${profile.name}`}
@@ -172,15 +129,6 @@ const ConnectionRow = ({
 						<Edit01 className="size-4" />
 						Edit connection
 					</MenuItem>
-					{profile.hasNetworkStats && (
-						<MenuItem
-							className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-secondary outline-hidden hover:bg-primary_hover focus:bg-primary_hover"
-							onAction={onResetStats}
-						>
-							<BarChartSquareMinus className="size-4" />
-							Reset statistics
-						</MenuItem>
-					)}
 					<MenuItem
 						className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm text-error-primary outline-hidden hover:bg-error-primary focus:bg-error-primary"
 						onAction={onDelete}

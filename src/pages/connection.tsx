@@ -187,26 +187,6 @@ export const ConnectionPage = () => {
 		[profiles.remove, toast],
 	);
 
-	const resetStats = useCallback(
-		async (profile: Profile) => {
-			try {
-				await profiles.resetStats(profile.id);
-				toast.show({
-					tone: "info",
-					title: "Statistics reset",
-					description: profile.name,
-				});
-			} catch (reason) {
-				toast.show({
-					tone: "error",
-					title: "Could not reset statistics",
-					description: message(reason),
-				});
-			}
-		},
-		[profiles.resetStats, toast],
-	);
-
 	return (
 		<main className="flex min-h-dvh flex-col bg-secondary text-primary">
 			<AppHeader
@@ -223,7 +203,6 @@ export const ConnectionPage = () => {
 						onCreate={() => setEditing(emptyProfile)}
 						onEdit={setEditing}
 						onDelete={(profile) => void remove(profile)}
-						onResetStats={(profile) => void resetStats(profile)}
 					/>
 				) : (
 					<ActiveConnection
@@ -231,7 +210,6 @@ export const ConnectionPage = () => {
 						name={active?.name ?? "VPN"}
 						portal={active?.portal ?? ""}
 						connection={vpn.connection}
-						stats={vpn.stats}
 						onDisconnect={() => void vpn.disconnect()}
 					/>
 				)}
