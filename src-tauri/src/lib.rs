@@ -382,7 +382,18 @@ pub fn run() {
     let sql = tauri_plugin_sql::Builder::default()
         .add_migrations(settings::DATABASE_URL, settings::migrations())
         .build();
-    tauri::Builder::default()
+
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            tray::show_window(app);
+        }));
+    }
+
+    builder
         .plugin(sql)
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
