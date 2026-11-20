@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:tauri": "bun run scripts/build-helper.ts && vite",
     "build": "tsc && vite build",
-    "build:tauri": "bun run scripts/build-helper.ts --release && bun run build",
+    "build:tauri": "bun run scripts/build-helper.ts --release && sh scripts/build-cli.sh --release && bun run build",
     "lint": "bun run lint:react && bun run lint:rust",
     "lint:react": "biome check .",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings",

@@ -136,7 +136,7 @@ credentials.
 ## Releases
 
 GitHub Actions' **Build release artifacts** workflow builds on Ubuntu 24.04,
-checks the frontend and Rust workspace, and produces the desktop `.deb`, a
+checks the frontend and Rust workspace, and produces the desktop `.deb` (which includes the CLI), a
 separate standalone CLI archive, and `SHA256SUMS`. Its default run only uploads
 artifacts for review. Select **Publish the built version as a GitHub release**
 to publish after the checks and builds succeed. Product, Tauri, and workspace
@@ -148,6 +148,9 @@ For a downloaded desktop package:
 ```sh
 sudo apt install ./gp-client_0.2.0_amd64.deb
 ```
+
+The package also installs the CLI as `/usr/bin/gp-client-cli`; it finds the
+package's `/usr/bin/gp-helper` next to it, so no separate CLI install is needed.
 
 For the standalone archive, install the runtime dependencies described above,
 extract it, and install the executables separately. This example uses

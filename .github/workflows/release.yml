@@ -82,11 +82,13 @@ jobs:
           cargo clippy --locked --manifest-path src-tauri/Cargo.toml \
             -p gp-cli -p gp-store -p gp-helper --all-targets -- -D warnings
 
-      - name: Build desktop package
-        run: bun run tauri build --bundles deb
-
+      # Built first with --locked; the desktop build's own CLI build is then a
+      # no-op, and the .deb ships this binary as /usr/bin/gp-client-cli.
       - name: Build standalone CLI
         run: ./scripts/build-cli.sh --locked --release
+
+      - name: Build desktop package
+        run: bun run tauri build --bundles deb
 
       - name: Assemble release artifacts
         env:
@@ -102,6 +104,7 @@ jobs:
           install -m644 README.md "$RUNNER_TEMP/$directory/README.md"
           tar -C "$RUNNER_TEMP" -czf "release-assets/$directory.tar.gz" "$directory"
           dpkg-deb --info release-assets/*.deb
+          dpkg-deb --contents release-assets/*.deb | grep -qE ' (\./)?usr/bin/gp-client-cli$'
           tar -tzf "release-assets/$directory.tar.gz"
           (cd release-assets && sha256sum *.deb *.tar.gz > SHA256SUMS)
 
