@@ -1,0 +1,13 @@
+[package]
+name = "gp-store"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+keyring = "4"
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+serde_json = "1"

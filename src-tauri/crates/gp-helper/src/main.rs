@@ -4,8 +4,10 @@
 //! portal and gateway protocol directly; libopenconnect receives the resulting
 //! cookie and only builds the tunnel.
 
+mod daemon;
 mod deadline;
 mod prompt;
+mod tunnel_lock;
 
 use std::{
 	io::{self, BufRead, Write},
@@ -308,7 +310,14 @@ fn run_connection(
 	prompts: Arc<Prompts>,
 	control: Arc<ConnectionControl>,
 ) {
-	prompts.reset_all();
+	let _tunnel_lock = match tunnel_lock::acquire() {
+		Ok(lock) => lock,
+		Err(msg) => {
+			emitter.emit(Event::Error { msg });
+			emitter.emit(Event::State { state: "disconnected" });
+			return;
+		}
+	};
 	let trusted = TrustStore::default();
 	trusted.seed(request.trusted_fingerprint.clone());
 	let attempt = Arc::new(Attempt::new(
@@ -487,6 +496,10 @@ fn gateway_info(gateway: &gp_auth::Gateway) -> GatewayInfo {
 }
 
 fn main() {
+	if let Err(error) = daemon::detach_if_requested() {
+		eprintln!("{error}");
+		std::process::exit(1);
+	}
 	let emitter = Emitter(Arc::new(Mutex::new(io::stdout())));
 	let prompts = Arc::new(Prompts::default());
 	let control = Arc::new(ConnectionControl::default());
@@ -515,6 +528,7 @@ fn main() {
 				if let Some(thread) = worker.take() {
 					let _ = thread.join();
 				}
+				prompts.reset_all();
 				let (worker_emitter, worker_prompts, worker_control) =
 					(emitter.clone(), prompts.clone(), control.clone());
 				worker = Some(std::thread::spawn(move || {
