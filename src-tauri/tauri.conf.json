@@ -41,7 +41,7 @@
     "externalBin": ["binaries/gp-helper"],
     "linux": {
       "deb": {
-        "depends": ["libopenconnect5", "vpnc-scripts"],
+        "depends": ["libopenconnect5", "pkexec", "vpnc-scripts"],
         "files": {
           "/usr/bin/gp-client-cli": "target/cli/release/gp-client",
           "/usr/share/polkit-1/actions/com.npvinh.gp-client.policy": "polkit/com.npvinh.gp-client.policy"

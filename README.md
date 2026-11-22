@@ -104,7 +104,22 @@ controlled: the CLI reports another owner and cannot disconnect a GUI session
 (or another user's CLI session). New competing attempts fail without disturbing
 the existing tunnel.
 
+## Linux desktop
+
+The desktop app requires a native Wayland session. Launch it from your desktop's
+app launcher, or run `bun run tauri dev` from a terminal in that session. If your
+environment sets `GDK_BACKEND`, unset it or set it to `wayland`.
+
+Tray actions require a desktop panel that supports StatusNotifierItem
+(AppIndicator). Closing the window leaves the VPN running. On desktops without
+a compatible tray, launch gp-client again to reopen the window and disconnect
+from there.
+
 ## Development and validation
+
+Rustup selects Rust 1.99.0 from `rust-toolchain.toml` for local and CI builds.
+Keep this pin until Tauri's sidecar copier supports Cargo's Rust 1.100 output
+layout; newer Cargo versions currently fail while staging `gp-helper`.
 
 ```sh
 bun install --frozen-lockfile
@@ -140,7 +155,7 @@ checks the frontend and Rust workspace, and produces the desktop `.deb` (which i
 separate standalone CLI archive, and `SHA256SUMS`. Its default run only uploads
 artifacts for review. Select **Publish the built version as a GitHub release**
 to publish after the checks and builds succeed. Product, Tauri, and workspace
-crate versions must match. The workflow pins Rust 1.99 while Tauri's sidecar
+crate versions must match. The repository pins Rust 1.99 while Tauri's sidecar
 copier depends on the Cargo build-directory layout used before Rust 1.100.
 
 For a downloaded desktop package:

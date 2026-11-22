@@ -1,6 +1,6 @@
 use std::{
     env,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader, ErrorKind, Write},
     path::PathBuf,
     process::{Child, ChildStdin, Command, Stdio},
     sync::{Arc, Mutex},
@@ -201,7 +201,13 @@ impl HelperProcess {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| format!("Could not start the privileged VPN helper: {error}"))?;
+            .map_err(|error| match error.kind() {
+                ErrorKind::NotFound => {
+                    "Could not find pkexec. Install the pkexec package to start the VPN helper."
+                        .into()
+                }
+                _ => format!("Could not start pkexec for the VPN helper: {error}"),
+            })?;
         let stdin = child.stdin.take().ok_or("Could not open helper stdin")?;
         let stdout = child.stdout.take().ok_or("Could not open helper stdout")?;
         // Anything the helper or libopenconnect writes to stderr is a

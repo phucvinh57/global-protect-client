@@ -1,0 +1,5 @@
+# Tauri 2.6's sidecar copier requires Cargo's pre-1.100 build directory layout.
+[toolchain]
+channel = "1.99.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

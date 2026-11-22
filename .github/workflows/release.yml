@@ -23,8 +23,6 @@ jobs:
       contents: write
     env:
       CARGO_TERM_COLOR: always
-      # Tauri 2.6's sidecar copier assumes the Cargo layout used before 1.100.
-      RUSTUP_TOOLCHAIN: 1.99.0
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,7 +39,8 @@ jobs:
           sudo apt-get install -y build-essential clang libclang-dev pkg-config \
             libopenconnect-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf vpnc-scripts
-          rustup toolchain install 1.99.0 --profile minimal --component clippy
+          # Install the repository's pinned toolchain and components.
+          rustup show active-toolchain
 
       - name: Check release version
         id: version

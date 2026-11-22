@@ -379,6 +379,16 @@ fn quit(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    {
+        // Select the native backend before GTK opens the display.
+        gtk::gdk::set_allowed_backends("wayland");
+        if let Err(error) = gtk::init() {
+            eprintln!("[gp-client] could not open a Wayland display: {error}");
+            std::process::exit(1);
+        }
+    }
+
     let sql = tauri_plugin_sql::Builder::default()
         .add_migrations(settings::DATABASE_URL, settings::migrations())
         .build();
@@ -389,7 +399,10 @@ pub fn run() {
     #[cfg(desktop)]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            tray::show_window(app);
+            let handle = app.clone();
+            if let Err(error) = app.run_on_main_thread(move || tray::show_window(&handle)) {
+                eprintln!("[gp-client] could not schedule window activation: {error}");
+            }
         }));
     }
 
