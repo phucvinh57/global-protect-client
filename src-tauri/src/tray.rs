@@ -1,6 +1,5 @@
-//! System tray. Closing the window destroys it, so the tray icon is the app's
-//! only visible surface while a tunnel is up, and the only way back to a
-//! window.
+//! System tray. Closing the window destroys it. The tray stays available
+//! on supported panels and can reopen the window.
 
 use tauri::{
     image::Image,
@@ -8,6 +7,9 @@ use tauri::{
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager, WebviewWindowBuilder,
 };
+
+#[cfg(target_os = "linux")]
+use gtk::prelude::GtkWindowExt;
 
 use crate::{helper_process::ActiveProfile, AppState};
 
@@ -27,14 +29,22 @@ fn icon(connected: bool) -> tauri::Result<Image<'static>> {
     })
 }
 
-/// Raises the window, building a new one when the last close destroyed it.
+/// Presents the window on the main thread, building it again after a close.
 /// The rebuild reuses the config the app first started from, so a reopened
 /// window is indistinguishable from the original.
 pub fn show_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.unminimize();
-        let _ = window.set_focus();
+        #[cfg(target_os = "linux")]
+        match window.gtk_window() {
+            Ok(window) => window.present(),
+            Err(error) => eprintln!("[gp-client] could not present the window: {error}"),
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
         return;
     }
     let Some(config) = app.config().app.windows.first().cloned() else {
